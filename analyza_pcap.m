@@ -11,7 +11,7 @@ function analyza_pcap(pcap_file, only_task1)
 %  Požiadavky:
 %    - MATLAB R2020a+ (exportgraphics)
 %    - Statistics and Machine Learning Toolbox  (exprnd, poisspdf, prctile)
-%    - Pre načítanie PCAP: Communications Toolbox (pcapread, R2021a+)
+%    - Pre načítanie PCAP: 5G Toolbox (pcapReader)
 %      Alternatíva: exportujte PCAP do CSV cez tshark a upravte load_pcap().
 
 if nargin < 1, pcap_file  = '';    end
@@ -556,9 +556,9 @@ end
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 function [times, protos] = load_pcap(pcap_file)
-%LOAD_PCAP  Načíta .pcap súbor pomocou pcapread (Communications Toolbox, R2021a+).
+%LOAD_PCAP  Načíta .pcap súbor pomocou pcapReader (5G Toolbox).
 %
-%  Ak pcapread nie je dostupný, exportujte PCAP do CSV cez tshark:
+%  Ak pcapReader nie je dostupný, exportujte PCAP do CSV cez tshark:
 %    tshark -r subor.pcap -T fields -e frame.time_epoch -e ip.proto \
 %           -E separator=, -E header=y > subor.csv
 %  a nahraďte telo tejto funkcie za:
@@ -570,20 +570,21 @@ function [times, protos] = load_pcap(pcap_file)
 
 fprintf('\nNačítavam PCAP: %s\n', pcap_file);
 
-if ~exist('pcapread', 'file')
-    error(['Funkcia pcapread nie je dostupná.\n' ...
-           'Vyžaduje MATLAB R2021a+ a Communications Toolbox.\n' ...
+if ~exist('pcapReader', 'class')
+    error(['Trieda pcapReader nie je dostupná.\n' ...
+           'Vyžaduje MATLAB 5G Toolbox.\n' ...
            'Alternatíva: exportujte PCAP do CSV cez tshark – pozri komentár v load_pcap().']);
 end
 
-pkt_info = pcapread(pcap_file);
-n        = numel(pkt_info);
+reader   = pcapReader(pcap_file);
+pkt_info = read(reader);          % vráti tabuľku: Timestamp, PacketData, ...
+n        = height(pkt_info);
 times    = zeros(n, 1);
 protos   = repmat({'other'}, n, 1);
 
 for i = 1:n
-    times(i) = double(pkt_info(i).Timestamp);
-    raw      = pkt_info(i).Data;
+    times(i) = double(pkt_info.Timestamp(i));
+    raw      = pkt_info.PacketData{i};
     % Ethernet II rámec: EtherType na bajtoch 13–14 (1-indexed)
     % IPv4 (0x0800): Protocol field na bajte 24 (14 B Eth + 9 B do IP proto)
     if numel(raw) >= 24
