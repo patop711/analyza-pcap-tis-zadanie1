@@ -558,6 +558,13 @@ end
 function [times, protos] = load_pcap(pcap_file)
 %LOAD_PCAP  Načíta .pcap súbor pomocou pcapReader (5G Toolbox).
 %
+%  Podporuje iba legacy PCAP formát (nie PCAP-NG).
+%  Ak je vstupný súbor PCAP-NG, funkcia sa pokúsi ho automaticky
+%  skonvertovať pomocou nástroja editcap (súčasť Wireshark).
+%
+%  Manuálna konverzia PCAP-NG → PCAP:
+%    editcap -F pcap vstup.pcapng vystup.pcap
+%
 %  Ak pcapReader nie je dostupný, exportujte PCAP do CSV cez tshark:
 %    tshark -r subor.pcap -T fields -e frame.time_epoch -e ip.proto \
 %           -E separator=, -E header=y > subor.csv
@@ -575,6 +582,11 @@ if ~exist('pcapReader', 'class')
            'Vyžaduje MATLAB 5G Toolbox.\n' ...
            'Alternatíva: exportujte PCAP do CSV cez tshark – pozri komentár v load_pcap().']);
 end
+
+% ── Detekcia PCAP-NG podľa magického čísla ────────────────────────────────
+% PCAP-NG:    prvé 4 bajty = 0x0A 0D 0D 0A  (Section Header Block type)
+% Legacy PCAP: 0xD4C3B2A1 alebo 0xA1B2C3D4 (little/big-endian magic)
+pcap_file = convert_pcapng_if_needed(pcap_file);
 
 reader   = pcapReader(pcap_file);
 pkt_info = read(reader);          % vráti tabuľku: Timestamp, PacketData, ...
@@ -610,6 +622,58 @@ n_other = sum(strcmp(protos, 'other'));
 fprintf('  Celkový počet paketov : %d\n', n);
 fprintf('  TCP / UDP / iné       : %d / %d / %d\n', n_tcp, n_udp, n_other);
 fprintf('  Trvanie záznamu       : %.3f s\n', times(end) - times(1));
+end
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%  PCAP-NG konverzia
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+function out_file = convert_pcapng_if_needed(pcap_file)
+%CONVERT_PCAPNG_IF_NEEDED  Ak je súbor PCAP-NG, skonvertuje ho na PCAP.
+%
+%  PCAP-NG začína magickými bajtmi 0x0A 0D 0D 0A (Section Header Block).
+%  pcapReader podporuje iba legacy PCAP, preto je potrebná konverzia.
+%  Konverzia sa vykonáva pomocou editcap (Wireshark).
+
+out_file = pcap_file;   % predvolene vrátime originálny súbor
+
+% Prečítaj prvé 4 bajty a skontroluj PCAP-NG magic
+fid = fopen(pcap_file, 'rb');
+if fid == -1
+    error('Nepodarilo sa otvoriť súbor: %s', pcap_file);
+end
+magic = fread(fid, 4, 'uint8=>uint8')';
+fclose(fid);
+
+PCAPNG_MAGIC = uint8([0x0A, 0x0D, 0x0D, 0x0A]);
+if ~isequal(magic, PCAPNG_MAGIC)
+    return;   % nie je PCAP-NG, nič netreba robiť
+end
+
+fprintf('  Detekovaný formát PCAP-NG – pokúšam sa o konverziu na PCAP...\n');
+
+% Vytvor cestu pre dočasný .pcap súbor
+[dir_, name_] = fileparts(pcap_file);
+tmp_file = fullfile(dir_, [name_ '_converted.pcap']);
+
+% Pokús sa spustiť editcap (súčasť Wireshark)
+cmd = sprintf('editcap -F pcap "%s" "%s"', pcap_file, tmp_file);
+[status, output] = system(cmd);
+
+if status == 0 && isfile(tmp_file)
+    fprintf('  Konverzia úspešná: %s\n', tmp_file);
+    out_file = tmp_file;
+else
+    error(['Súbor "%s" je vo formáte PCAP-NG, ktorý pcapReader nepodporuje.\n\n' ...
+           'Konverzia pomocou editcap zlyhala (editcap nie je v PATH alebo nie je nainštalovaný).\n\n' ...
+           'Vykonajte konverziu manuálne:\n' ...
+           '  editcap -F pcap "%s" vystup.pcap\n\n' ...
+           'Potom spustite:\n' ...
+           '  analyza_pcap(''vystup.pcap'')\n\n' ...
+           'editcap nájdete v balíku Wireshark: https://www.wireshark.org/\n' ...
+           'Výstup príkazu: %s'], pcap_file, pcap_file, output);
+end
 end
 
 
